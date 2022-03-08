@@ -1,5 +1,4 @@
-fn find_slot<T>(slice: &[T], element: &T, cmp: &impl Fn(&T, &T) -> bool) -> usize
-{
+fn find_slot<T>(slice: &[T], element: &T, cmp: &impl Fn(&T, &T) -> bool) -> usize {
     let mut lo = 0usize;
     let mut hi = slice.len();
 
@@ -15,8 +14,7 @@ fn find_slot<T>(slice: &[T], element: &T, cmp: &impl Fn(&T, &T) -> bool) -> usiz
     lo
 }
 
-pub fn insertion_sort_with_comparator<T>(slice: &mut[T], cmp: impl Fn(&T, &T) -> bool)
-{
+pub fn insertion_sort_with_comparator<T>(slice: &mut [T], cmp: impl Fn(&T, &T) -> bool) {
     let len = slice.len();
     for i in 0..len {
         let slot = find_slot(&slice[..i], &slice[i], &cmp);
@@ -63,7 +61,10 @@ mod tests {
 
         let mut arr = [Pair(5, 1), Pair(2, 3), Pair(4, 1), Pair(2, 1), Pair(2, 5)];
         insertion_sort(&mut arr);
-        assert_eq!(arr, [Pair(2, 3), Pair(2, 1), Pair(2, 5), Pair(4, 1), Pair(5, 1)]);
+        assert_eq!(
+            arr,
+            [Pair(2, 3), Pair(2, 1), Pair(2, 5), Pair(4, 1), Pair(5, 1)]
+        );
     }
 
     #[test]
@@ -79,4 +80,3 @@ mod tests {
         assert_eq!(arr, [NoOrd(1), NoOrd(2), NoOrd(3), NoOrd(5), NoOrd(7)]);
     }
 }
-
