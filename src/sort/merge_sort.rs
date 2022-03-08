@@ -11,22 +11,30 @@ unsafe fn assume_init_is_less<T>(a: &MaybeUninit<T>, b: &MaybeUninit<T>, is_less
     is_less(a.assume_init_ref(), b.assume_init_ref())
 }
 
-fn do_merge_move<T>(slice: &mut [MaybeUninit<T>], aux: &mut [MaybeUninit<T>], is_less: &impl Fn(&T, &T) -> bool) {
+fn do_merge<T>(slice: &mut [MaybeUninit<T>], aux: &mut [MaybeUninit<T>], is_less: &impl Fn(&T, &T) -> bool) {
     let mut left = (0usize, slice.len() / 2);
     let mut right = (slice.len() / 2, slice.len());
 
+    // Merge elements from `left` and `right` ranges by moving them into `aux`.
+    // SAFETY guarantees for the loop:
+    // All elements in `slice[left.0..left.1]` are initialized and safe to read.
+    // All elements in `slice[right.0..right.1]` are initialized and safe to read.
+    // By the end of the loop, both left.0 == left.1 and right.0 == right.1, thus `slice` is unsafe to read.
+    // Also, by the end of the loop, all elements are moved into `aux`, now it is safe to read.
     for i in 0..slice.len() {
-        let range = match 0 {
-            _ if left.0 == left.1 => &mut right,
-            _ if right.0 == right.1 => &mut left,
-            _ if unsafe { assume_init_is_less(&slice[left.0], &slice[right.0], is_less) } => &mut left,
-            _ => &mut right
+        let index = match 0 {
+            _ if left.0 == left.1 => &mut right.0,
+            _ if right.0 == right.1 => &mut left.0,
+            _ if unsafe { assume_init_is_less(&slice[left.0], &slice[right.0], is_less) } => &mut left.0,
+            _ => &mut right.0
         };
 
-        aux[i].write(unsafe { assume_init_move(&mut slice[range.0]) });
-        range.0 += 1;
+        aux[i].write(unsafe { assume_init_move(&mut slice[*index]) });
+        *index += 1;
     }
 
+    // Move elements from `aux` back to `slice`.
+    // SAFETY: once this loop is finished, `aux` is moved-from and unsafe to read, `slice` is moved-into and safe to read
     for i in 0..aux.len() {
         slice[i].write( unsafe { assume_init_move(&mut aux[i]) } );
     }
@@ -37,15 +45,18 @@ fn do_merge_sort<T>(slice: &mut [MaybeUninit<T>], aux: &mut[MaybeUninit<T>], is_
         let mid = slice.len() / 2;
         do_merge_sort(&mut slice[..mid], &mut aux[..mid], is_less);
         do_merge_sort(&mut slice[mid..], &mut aux[mid..], is_less);
-        do_merge_move(slice, aux, is_less);
+        do_merge(slice, aux, is_less);
     }
 }
 
 pub fn merge_sort_with_comparator<T>(slice: &mut [T], is_less: impl Fn(&T, &T) -> bool)
 {
+    // Allow ourselves to move elements out of `slice` (because merge-sort needs auxiliary memory for merge operation).
+    // SAFETY: all `slice` elements are initialized and safe to read from, by now.
     let slice: &mut [MaybeUninit<T>] = unsafe { core::mem::transmute(slice) };
 
-    // eugh, allocation!
+    // Auxiliary memory required for merge operation (eugh, allocation!)
+    // SAFETY: `aux` elements are uninitialized and unsafe to read from.
     let mut aux = Vec::with_capacity(slice.len());
     for _ in 0..slice.len() {
         aux.push(MaybeUninit::uninit());
