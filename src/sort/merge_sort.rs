@@ -1,85 +1,67 @@
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 
-unsafe fn assume_init_move<T>(init_ref: &mut MaybeUninit<T>) -> T {
-    let val: T = core::ptr::read(init_ref.as_mut_ptr());
-    *init_ref = MaybeUninit::uninit();
-    val
-}
-
-unsafe fn assume_init_is_less<T>(
-    a: &MaybeUninit<T>,
-    b: &MaybeUninit<T>,
-    is_less: &impl Fn(&T, &T) -> bool,
-) -> bool {
-    is_less(a.assume_init_ref(), b.assume_init_ref())
-}
-
 fn do_merge<T>(
     slice: &mut [MaybeUninit<T>],
-    aux: &mut [MaybeUninit<T>],
+    scratch: &mut [MaybeUninit<T>],
     is_less: &impl Fn(&T, &T) -> bool,
 ) {
-    let mut left = (0usize, slice.len() / 2);
-    let mut right = (slice.len() / 2, slice.len());
+    debug_assert_eq!(slice.len(), scratch.len());
 
-    // Merge elements from `left` and `right` ranges by moving them into `aux`.
-    // SAFETY guarantees for the loop:
-    // All elements in `slice[left.0..left.1]` are initialized and safe to read.
-    // All elements in `slice[right.0..right.1]` are initialized and safe to read.
-    // By the end of the loop, both left.0 == left.1 and right.0 == right.1, thus `slice` is unsafe to read.
-    // Also, by the end of the loop, all elements are moved into `aux`, now it is safe to read.
-    for elem in aux.iter_mut() {
-        let index = match 0 {
-            _ if left.0 == left.1 => &mut right.0,
-            _ if right.0 == right.1 => &mut left.0,
-            _ if unsafe { assume_init_is_less(&slice[left.0], &slice[right.0], is_less) } => {
-                &mut left.0
-            }
-            _ => &mut right.0,
-        };
+    {
+        let (mut left, mut right) = slice.split_at_mut(slice.len() / 2);
 
-        elem.write(unsafe { assume_init_move(&mut slice[*index]) });
-        *index += 1;
+        for elem in scratch.iter_mut() {
+            let use_left = match (left.first(), right.first()) {
+                (Some(l), Some(r)) => unsafe { is_less(l.assume_init_ref(), r.assume_init_ref()) },
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => unreachable!(
+                    "Source slices are exhausted, while target is not yet fully initialized"
+                ),
+            };
+
+            // match expr above does not allow me to return mut references to slices... well ok
+            let source = if use_left { &mut left } else { &mut right };
+            elem.write(unsafe { source.take_first_mut().unwrap().assume_init_read() });
+        }
     }
 
-    // Move elements from `aux` back to `slice`.
-    // SAFETY: once this loop is finished, `aux` is moved-from and unsafe to read, `slice` is moved-into and safe to read
-    for i in 0..aux.len() {
-        slice[i].write(unsafe { assume_init_move(&mut aux[i]) });
-    }
+    slice.iter_mut().zip(scratch.iter()).for_each(|(s, a)| {
+        s.write(unsafe { a.assume_init_read() });
+    });
 }
 
 fn do_merge_sort<T>(
     slice: &mut [MaybeUninit<T>],
-    aux: &mut [MaybeUninit<T>],
+    scratch: &mut [MaybeUninit<T>],
     is_less: &impl Fn(&T, &T) -> bool,
 ) {
     if slice.len() > 1 {
         let mid = slice.len() / 2;
-        do_merge_sort(&mut slice[..mid], &mut aux[..mid], is_less);
-        do_merge_sort(&mut slice[mid..], &mut aux[mid..], is_less);
-        do_merge(slice, aux, is_less);
+        do_merge_sort(&mut slice[..mid], &mut scratch[..mid], is_less);
+        do_merge_sort(&mut slice[mid..], &mut scratch[mid..], is_less);
+        do_merge(slice, scratch, is_less);
     }
 }
 
-pub fn merge_sort_with_comparator<T>(slice: &mut [T], is_less: impl Fn(&T, &T) -> bool) {
+pub fn merge_sort_by<T>(slice: &mut [T], is_less: impl Fn(&T, &T) -> bool) {
     // Allow ourselves to move elements out of `slice` (because merge-sort needs auxiliary memory for merge operation).
     // SAFETY: all `slice` elements are initialized and safe to read from, by now.
     let slice: &mut [MaybeUninit<T>] = unsafe { core::mem::transmute(slice) };
 
     // Auxiliary memory required for merge operation (eugh, allocation!)
-    // SAFETY: `aux` elements are uninitialized and unsafe to read from.
-    let mut aux = Vec::with_capacity(slice.len());
-    for _ in 0..slice.len() {
-        aux.push(MaybeUninit::uninit());
-    }
+    // `vec![MaybeUninit::uninit(); slice.len()]` does not work - it requires `T: Clone`
+    // SAFETY: `scratch` elements are uninitialized and unsafe to read from.
+    let mut scratch = (0..slice.len())
+        .map(|_| MaybeUninit::uninit())
+        .collect::<Vec<_>>();
 
-    do_merge_sort(slice, &mut aux, &is_less);
+    do_merge_sort(slice, &mut scratch, &is_less);
 }
 
 pub fn merge_sort<T: PartialOrd>(slice: &mut [T]) {
-    merge_sort_with_comparator(slice, <T as PartialOrd>::le)
+    merge_sort_by(slice, <T as PartialOrd>::le)
 }
 
 #[cfg(test)]
@@ -130,7 +112,7 @@ mod tests {
         let mut arr = [NoOrd(1), NoOrd(5), NoOrd(2), NoOrd(3), NoOrd(7)];
         // Should not compile - the trait `PartialOrd` is not implemented for `NoOrd`
         // insertion_sort(&mut arr);
-        merge_sort_with_comparator(&mut arr, |a, b| a.0 < b.0);
+        merge_sort_by(&mut arr, |a, b| a.0 < b.0);
         assert_eq!(arr, [NoOrd(1), NoOrd(2), NoOrd(3), NoOrd(5), NoOrd(7)]);
     }
 }

@@ -14,7 +14,7 @@ fn find_slot<T>(slice: &[T], element: &T, cmp: &impl Fn(&T, &T) -> bool) -> usiz
     lo
 }
 
-pub fn insertion_sort_with_comparator<T>(slice: &mut [T], cmp: impl Fn(&T, &T) -> bool) {
+pub fn insertion_sort_by<T>(slice: &mut [T], cmp: impl Fn(&T, &T) -> bool) {
     let len = slice.len();
     for i in 0..len {
         let slot = find_slot(&slice[..i], &slice[i], &cmp);
@@ -25,7 +25,7 @@ pub fn insertion_sort_with_comparator<T>(slice: &mut [T], cmp: impl Fn(&T, &T) -
 }
 
 pub fn insertion_sort<T: PartialOrd>(slice: &mut [T]) {
-    insertion_sort_with_comparator(slice, <T as PartialOrd>::le)
+    insertion_sort_by(slice, <T as PartialOrd>::le)
 }
 
 #[cfg(test)]
@@ -76,7 +76,7 @@ mod tests {
         let mut arr = [NoOrd(1), NoOrd(5), NoOrd(2), NoOrd(3), NoOrd(7)];
         // Should not compile - the trait `PartialOrd` is not implemented for `NoOrd`
         // insertion_sort(&mut arr);
-        insertion_sort_with_comparator(&mut arr, |a, b| a.0 < b.0);
+        insertion_sort_by(&mut arr, |a, b| a.0 < b.0);
         assert_eq!(arr, [NoOrd(1), NoOrd(2), NoOrd(3), NoOrd(5), NoOrd(7)]);
     }
 }
